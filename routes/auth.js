@@ -31,7 +31,23 @@ router.post('/register', async (req, res, next) => {
       res.redirect('/toilets');
     });
   } catch (e) {
-    req.flash('error', e.message);
+    let msg = 'Something went wrong';
+    // Mongoose duplicate key error (MongoServerError 11000)
+    if (e.name === 'MongoServerError' && e.code === 11000 && e.keyValue) {
+      const field = Object.keys(e.keyValue)[0];
+      msg = `${field.charAt(0).toUpperCase() + field.slice(1)} already exists`;
+    } else if (e.message && e.message.includes('A user with the given username is already registered')) {
+      // passport-local-mongoose username collision
+      msg = 'Username already exists';
+    } else if (e.message && /email/i.test(e.message)) {
+      msg = 'Accound with this email already exists';
+    } else if (e.errors) {
+      // Mongoose validation errors
+      msg = Object.values(e.errors).map(err => err.message).join(', ');
+    } else if (e.message) {
+      msg = e.message;
+    }
+    req.flash('error', msg);
     res.redirect('/register');
   }
 });
