@@ -23,13 +23,12 @@ router.get('/', async (req, res) => {
     filter.cleanlinessRating = { $gte: parseInt(minRating) };
   }
 
-  let toilets = await Toilet.find(filter);
+  let toilets = [];
   let searchedCity = null;
 
-  // IMPROVED location search
+  // IMPROVED location search with geospatial indexing
   if (location && location.trim() !== '') {
     try {
-      // More flexible geocoding - removed restrictive types
       const geocodeUrl = `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(location)}.json?country=IN&proximity=79.0882,21.1458&limit=1&access_token=${process.env.MAPBOX_TOKEN}`;
       
       const geoResponse = await axios.get(geocodeUrl);
@@ -41,24 +40,29 @@ router.get('/', async (req, res) => {
         // Extract just city name (before comma)
         searchedCity = cityName.split(',')[0];
         
-        // Calculate distances and filter by proximity (100km radius - increased)
-        toilets = toilets.filter(toilet => {
-          if (toilet.geometry && toilet.geometry.coordinates) {
-            const distance = calculateDistance(
-              cityCenter[1], cityCenter[0], // lat, lng of city
-              toilet.geometry.coordinates[1], toilet.geometry.coordinates[0] // lat, lng of toilet
-            );
-            toilet.distance = Math.round(distance * 100) / 100; // Round to 2 decimal places
-            return distance <= 100; // Increased from 50km to 100km
+        // Use geospatial query with 2dsphere index for efficient location-based search
+        // $near returns results sorted by distance automatically
+        let geoQuery = {
+          geometry: {
+            $near: {
+              $geometry: {
+                type: "Point",
+                coordinates: [cityCenter[0], cityCenter[1]]
+              },
+              $maxDistance: 100000 // 100 kilometers
+            }
           }
-          return false;
-        }).sort((a, b) => a.distance - b.distance);
+        };
+
+        // Combine geospatial query with other filters
+        Object.assign(geoQuery, filter);
+        toilets = await Toilet.find(geoQuery);
 
         // Set flash messages based on results
         if (toilets.length > 0) {
           req.flash('success', `Found ${toilets.length} toilet${toilets.length > 1 ? 's' : ''} in ${searchedCity}`);
         } else {
-          req.flash('error', `No toilets found within 100km of ${searchedCity}. Try a broader search or add the first toilet in this area.`);
+          req.flash('error', `No toilets found within 500m of ${searchedCity}. Try a broader search or add the first toilet in this area.`);
         }
       } else {
         req.flash('error', 'Location not found. Please try a different search term.');
@@ -67,6 +71,9 @@ router.get('/', async (req, res) => {
       console.error('Geocoding error:', error);
       req.flash('error', 'Could not search for that location. Please try again.');
     }
+  } else {
+    // If no location search, just apply other filters
+    toilets = await Toilet.find(filter);
   }
 
   // Don't show flash messages for normal browsing
@@ -89,19 +96,6 @@ router.get('/', async (req, res) => {
   });
 });
 
-
-// Distance calculation helper function
-function calculateDistance(lat1, lon1, lat2, lon2) {
-  const R = 6371; // Earth's radius in kilometers
-  const dLat = (lat2 - lat1) * Math.PI / 180;
-  const dLon = (lon2 - lon1) * Math.PI / 180;
-  const a =
-    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-    Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
-    Math.sin(dLon / 2) * Math.sin(dLon / 2);
-  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-  return R * c;
-}
 
 
 // Show form to create new toilet

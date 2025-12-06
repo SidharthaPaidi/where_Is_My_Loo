@@ -81,6 +81,8 @@ const ToiletSchema = new Schema({
 
 });
 
+ToiletSchema.index({ "geometry": "2dsphere" });
+
 //average rating calculations 
 
 ToiletSchema.methods.calculateAverageRating = async function() {
